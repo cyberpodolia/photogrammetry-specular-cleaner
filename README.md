@@ -34,16 +34,17 @@ python -c "import torch; print(torch.cuda.is_available(), torch.version.cuda)"
 ### 1. Folder of images
 
 ```powershell
-python src/test_model.py --input "C:\path\to\images"
+python -m src.test_model --input "C:\path\to\images"
 ```
 
 ### 2. Single image
 
 ```powershell
-python src/test_model.py --input "C:\path\to\image.png"
+python -m src.test_model --input "C:\path\to\image.png"
 ```
 
 Outputs are saved to `outputs/` as `*_shr.png` by default.
+If multiple source files share the same stem, the script appends a short hash to avoid overwriting.
 
 ## Photogrammetry notes (why this helps)
 
@@ -77,7 +78,7 @@ Practical pipeline:
 - Match exposure/white balance between the pair
 - Use the **Cross** image directly for photogrammetry when possible
 - (Optional) derive a specular map:
-  - `spec ≈ max(0, parallel - k * cross)`
+  - `spec ~= max(0, parallel - k * cross)`
 
 When cross-polarization is not possible (outdoor scenes, uncontrolled lighting), this model can be used as a
 best-effort single-image approximation.
@@ -96,7 +97,7 @@ best-effort single-image approximation.
 Example:
 
 ```powershell
-python src/test_model.py --input "C:\path\to\images" --device cuda --resize 512 512
+python -m src.test_model --input "C:\path\to\images" --device cuda --resize 512 512
 ```
 
 Memory-safe (tiled) example:
@@ -134,7 +135,7 @@ python -m src.test_model `
 If loading fails because checkpoint is not a full module/TorchScript, pass model class info:
 
 ```powershell
-python src/test_model.py `
+python -m src.test_model `
   --input "C:\path\to\images" `
   --checkpoint "weights/model.pth" `
   --model-module "src.your_model_file" `
@@ -159,17 +160,12 @@ Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
 ## Model provenance / credits
 
 This project uses a pretrained checkpoint that was originally published on GitHub by its authors.
-Add the upstream URL and license here so users can trace the source and comply with terms:
-
-- Upstream repo: <ADD_LINK>
-- Paper / method: <ADD_LINK>
-- License for weights: <ADD_LICENSE>
 
 Upstream repo:
 - https://github.com/cyberpodolia/-photogrammetry-specular-cleaner
 
 Paper / method:
-- (Unknown / not linked yet)
+- Unknown / not linked yet.
 
 License for weights:
-- (Unknown / check upstream repository)
+- Unknown / check upstream repository.

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import importlib
 from pathlib import Path
 from typing import Sequence
@@ -182,7 +183,14 @@ def unwrap_output(output):
 
 
 def build_model(module_path: str, cls_name: str, kwargs_text: str) -> nn.Module:
-    module = importlib.import_module(module_path)
+    try:
+        module = importlib.import_module(module_path)
+    except ModuleNotFoundError as exc:
+        # Support `python src/test_model.py` + `--model-module src.xxx` from repo root.
+        if module_path.startswith("src.") and exc.name == "src":
+            module = importlib.import_module(module_path.split(".", 1)[1])
+        else:
+            raise
     cls = getattr(module, cls_name)
     kwargs = parse_kv(kwargs_text)
     return cls(**kwargs)
@@ -216,6 +224,22 @@ def strip_dataparallel_prefix(sd: dict) -> dict:
     return sd
 
 
+def load_checkpoint_payload(checkpoint: Path, map_location: str):
+    """Prefer safer weight-only loading when available, then fall back if needed."""
+    try:
+        return torch.load(str(checkpoint), map_location=map_location, weights_only=True)
+    except TypeError:
+        # Older PyTorch versions do not support `weights_only`.
+        return torch.load(str(checkpoint), map_location=map_location)
+    except Exception as exc:
+        # Backward-compat fallback for checkpoints requiring pickled Python objects.
+        print(
+            "[warn] Safe checkpoint load failed; falling back to full torch.load. "
+            f"Use trusted checkpoints only. ({type(exc).__name__}: {exc})"
+        )
+        return torch.load(str(checkpoint), map_location=map_location)
+
+
 def load_model(args: argparse.Namespace) -> nn.Module:
     ckpt = args.checkpoint
 
@@ -226,7 +250,7 @@ def load_model(args: argparse.Namespace) -> nn.Module:
     except Exception:
         pass
 
-    payload = torch.load(str(ckpt), map_location="cpu")
+    payload = load_checkpoint_payload(ckpt, map_location="cpu")
 
     if isinstance(payload, nn.Module):
         model = payload.to(args.device)
@@ -292,8 +316,27 @@ def run_model_tiled(model: nn.Module, x: torch.Tensor, tile_size: int, tile_over
     return output / weight.clamp_min(1e-6)
 
 
+def make_output_path(path: Path, output_dir: Path, used_names: set[str]) -> tuple[Path, bool]:
+    """Build an output filename and avoid collisions for same-stem source files."""
+    base_name = f"{path.stem}_shr.png"
+    if base_name not in used_names:
+        used_names.add(base_name)
+        return output_dir / base_name, False
+
+    digest = hashlib.sha1(str(path.resolve()).encode("utf-8")).hexdigest()[:8]
+    candidate = f"{path.stem}_{digest}_shr.png"
+    suffix = 2
+    while candidate in used_names:
+        candidate = f"{path.stem}_{digest}_{suffix}_shr.png"
+        suffix += 1
+
+    used_names.add(candidate)
+    return output_dir / candidate, True
+
+
 def run_inference(model: nn.Module, image_paths: Sequence[Path], args: argparse.Namespace) -> None:
     args.output.mkdir(parents=True, exist_ok=True)
+    used_names: set[str] = set()
 
     for i, path in enumerate(image_paths, 1):
         try:
@@ -311,7 +354,9 @@ def run_inference(model: nn.Module, image_paths: Sequence[Path], args: argparse.
             y = run_model_tiled(model, x, args.tile_size, args.tile_overlap)
 
         out_img = to_image(y, args.out_range)
-        out_path = args.output / f"{path.stem}_shr.png"
+        out_path, had_collision = make_output_path(path, args.output, used_names)
+        if had_collision:
+            print(f"[warn] Output name collision for '{path.name}', using '{out_path.name}'")
         out_img.save(out_path)
         print(f"[{i}/{len(image_paths)}] {path.name} -> {out_path}")
 
